@@ -26,11 +26,13 @@ protected:
 private:
     void filter(const QImage &img, QImage &buf, int x, int y);
     void doOperation();
-
+    void calculateHistogram(const QImage &img);
+    void showHistogram();
     QImage *buffer;
     QString file;
     int threshold;
     int histogram[256];
+    void drawHistogram(QPainter &painter);
 
 
     OperationMode op;
