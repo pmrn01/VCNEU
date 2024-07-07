@@ -13,12 +13,24 @@ Canvas::Canvas(QWidget *parent)
 
     op = NONE;
     threshold = 128;
+    std::fill(histogram, histogram + 256, 0);
     buffer = nullptr;
 }
 
 Canvas::~Canvas()
 {
     delete buffer;
+}
+
+void Canvas::calculateHistogram(const QImage &img) {
+    // Gehe durch jedes Pixel im Bild und erhöhe das Histogramm entsprechend
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            QColor color(img.pixel(x, y));
+            int gray = qGray(color.rgb()); // Konvertiere zur Graustufe
+            histogram[gray]++;
+        }
+    }
 }
 
 QSize Canvas::minimumSizeHint() const
@@ -91,6 +103,8 @@ void Canvas::filter(const QImage &img, QImage &buf, int x, int y)
     } break;
     case EDGE: {
         // Apply Laplace edge detection
+
+
         int kernel[3][3] = {{0, 1, 0}, {1, -4, 1}, {0, 1, 0}};
         int sumR = 0, sumG = 0, sumB = 0;
         for (int ky = -1; ky <= 1; ++ky) {
@@ -116,6 +130,13 @@ void Canvas::filter(const QImage &img, QImage &buf, int x, int y)
     }
 }
 
+void Canvas::showHistogram() {
+    qDebug() << "Histogram:";
+    for (int i = 0; i < 256; ++i) {
+        qDebug() << i << ": " << histogram[i];
+    }
+}
+
 void Canvas::doOperation()
 {
     QImageReader reader(file);
@@ -135,45 +156,88 @@ void Canvas::doOperation()
 
     if (op == HISTO) {
         std::memset(histogram, 0, sizeof(histogram));
-    }
 
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            filter(img, *buffer, x, y);
-        }
-    }
-
-    if (op == HISTO) {
-        // Histogram equalization for contrast stretching
+        // Calculate histogram and find min/max gray values
         int minGray = 255, maxGray = 0;
-        for (int i = 0; i < 256; ++i) {
-            if (histogram[i] > 0) {
-                if (i < minGray) minGray = i;
-                if (i > maxGray) maxGray = i;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                QColor col = img.pixelColor(x, y);
+                int gray = qGray(col.rgb());
+                histogram[gray]++;
+                if (gray < minGray) minGray = gray;
+                if (gray > maxGray) maxGray = gray;
             }
         }
 
+        // Histogram equalization for contrast stretching
         for (int y = 0; y < h; ++y) {
             for (int x = 0; x < w; ++x) {
-                int gray = qGray(buffer->pixel(x, y));
+                QColor col = img.pixelColor(x, y);
+                int gray = qGray(col.rgb());
+
+                // Stretch gray level to full range [0, 255]
                 int stretchedGray = 255 * (gray - minGray) / (maxGray - minGray);
-                buffer->setPixel(x, y, qRgb(stretchedGray, stretchedGray, stretchedGray));
+
+                buffer->setPixelColor(x, y, qRgb(stretchedGray, stretchedGray, stretchedGray));
+            }
+        }
+    } else {
+        // Handle other operations (NONE, CHANNEL, GREY, BINARY, BLUR, EDGE)
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                filter(img, *buffer, x, y);
             }
         }
     }
 }
 
-void Canvas::paintEvent(QPaintEvent *event)
-{
+
+void Canvas::drawHistogram(QPainter &painter) {
+    // Prüfen, ob der aktuelle Modus HISTO ist
+    if (op != HISTO) {
+        return;
+    }
+
+    // Festlegen der Parameter für das Histogramm-Diagramm
+    int barWidth = 2;
+    int maxValue = *std::max_element(std::begin(histogram), std::end(histogram));
+    int maxHeight = 100; // Höhe des Histogramms
+    int maxWidth = 256 * barWidth; // Breite des Histogramms
+
+    // Skalierungsfaktor für die Höhe der Säulen
+    qreal scaleFactor = static_cast<qreal>(maxHeight) / maxValue;
+
+    // Position des Histogramms rechts unten vom Bild
+    int histogramX = width() - maxWidth - 20; // Abstand vom rechten Rand
+    int histogramY = height() - maxHeight - 20; // Abstand vom unteren Rand
+
+    // Zeichnen des Hintergrunds
+    QRect histogramRect(histogramX, histogramY, maxWidth, maxHeight);
+    painter.fillRect(histogramRect, Qt::white);
+    painter.setPen(Qt::black);
+
+    // Zeichnen der Säulen des Histogramms
+    for (int i = 0; i < 256; ++i) {
+        int barHeight = static_cast<int>(histogram[i] * scaleFactor);
+        painter.fillRect(i * barWidth + histogramRect.left(), maxHeight - barHeight + histogramRect.top(),
+                         barWidth, barHeight, Qt::black);
+    }
+
+
+
+    // Zeichnen des Rahmens (optional)
+    painter.drawRect(histogramRect);
+}
+
+
+
+void Canvas::paintEvent(QPaintEvent *event) {
     QFrame::paintEvent(event);
 
     QPainter painter(this);
     int cw = width(), ch = height();
 
-    // white background
-    painter.fillRect(QRect(1, 1, cw - 2, ch - 2), Qt::white);
-    painter.setPen(Qt::gray);
-
+    // Zeichnen des Bildes wie bisher
     if (buffer) {
         int s = (cw < ch ? cw : ch) - 2;
         QImage out(buffer->scaled(s, s,
@@ -182,6 +246,9 @@ void Canvas::paintEvent(QPaintEvent *event)
         QRect rect(1, 1, out.width(), out.height());
         painter.drawImage(rect, out);
     }
+
+    // Zeichnen des Histogramms
+    drawHistogram(painter);
 }
 
 void Canvas::resizeEvent(QResizeEvent *event)
